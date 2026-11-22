@@ -6,11 +6,14 @@
   <main>
     <section id="search" class="view active"><div class="intro"><div class="eyebrow">ПОИСК ОБЪЯВЛЕНИЙ</div><h1>Найти то, что подходит.</h1><p>Укажите требования — проверим объявления и отметим, о чём спросить продавца.</p></div>
       <form id="searchForm"><label for="query">Что ищем</label><input id="query" required placeholder="Например, iPhone 15 Pro или Kugoo G3 Plus" autocomplete="off">
-        <div class="two"><div><label for="city">Город</label><input id="city" required value="Санкт-Петербург"></div><div><label for="maxPrice">Цена до, ₽</label><input id="maxPrice" type="number" min="1" placeholder="45 000"></div></div>
+        <label for="city">Город</label><input id="city" required value="Санкт-Петербург">
+        <div class="label-row"><label for="minPrice">Диапазон цены, ₽</label><span class="field-note">Оба поля необязательны</span></div>
+        <div class="two price-range"><div><input id="minPrice" type="number" min="0" placeholder="От 20 000" aria-label="Цена от"></div><div><input id="maxPrice" type="number" min="0" placeholder="До 45 000" aria-label="Цена до"></div></div>
         <label for="condition">Состояние</label><select id="condition"><option value="any">Любое</option><option value="used">Б/у</option><option value="new">Новое</option></select>
         <div class="label-row"><label for="requirements">Что важно</label><button type="button" id="templateBtn" class="text-btn">Пример требований</button></div><textarea id="requirements" rows="4" placeholder="Пробег до 1000 км; аккумулятор без просадок; документы"></textarea><p class="hint">Разделяйте характеристики точкой с запятой. Отсутствующие сведения попадут в «Спросить продавца».</p>
         <div class="two"><div><label for="pages">Страниц выдачи</label><input id="pages" type="number" min="1" max="10" value="3"></div><div><label for="limit">Объявлений максимум</label><input id="limit" type="number" min="1" max="100" value="30"></div></div>
-        <button class="primary" id="startBtn" type="submit">Начать поиск <span>↗</span></button></form>
+        <p class="search-note">Покажем товары по запросу. Аксессуары и цены вне диапазона не попадут в результаты.</p>
+        <button class="primary" id="startBtn" type="submit">Найти объявления <span>↗</span></button></form>
       <section id="progress" class="progress hidden" aria-live="polite"><div class="progress-head"><strong id="progressTitle">Идёт поиск</strong><span id="progressNumbers">0 / 0</span></div><div class="track"><div id="progressFill"></div></div><p id="progressDetail">Подготовка…</p><div class="actions"><button id="pauseBtn" class="secondary">Пауза</button><button id="stopBtn" class="quiet">Остановить</button></div></section>
     </section>
     <section id="results" class="view"><div class="section-head"><div><div class="eyebrow">ПРОВЕРЕННЫЕ ОБЪЯВЛЕНИЯ</div><h1>Результаты</h1></div><select id="sort" aria-label="Сортировка"><option value="score">По совпадению</option><option value="price">Сначала дешевле</option></select></div><div id="resultList" class="list"></div><button id="clearResults" class="quiet danger standalone" type="button">Очистить результаты</button></section>

@@ -5,6 +5,8 @@ import {
   citySlug,
   isSafeAvitoUrl,
   matchesSearchCity,
+  matchesSearchQuery,
+  matchesPriceRange,
   localAnalyze,
   mergeVerdicts,
   parsePrice,
@@ -18,12 +20,28 @@ test('city names are mapped and transliterated for Avito paths', () => {
 });
 
 test('search URL uses Avito pagination and maximum price parameters', () => {
-  const url = new URL(buildSearchUrl({query: 'iPhone 15', city: 'Москва', page: 3, maxPrice: 45000}));
+  const url = new URL(buildSearchUrl({query: 'iPhone 15', city: 'Москва', page: 3, minPrice: 20000, maxPrice: 45000}));
   assert.equal(url.pathname, '/moskva');
   assert.equal(url.searchParams.get('q'), 'iPhone 15');
   assert.equal(url.searchParams.get('p'), '3');
   assert.equal(url.searchParams.get('pmax'), '45000');
+  assert.equal(url.searchParams.get('pmin'), '20000');
   assert.equal(url.searchParams.has('priceMax'), false);
+});
+
+test('query relevance excludes a charger and a different model', () => {
+  assert.equal(matchesSearchQuery({title: 'Зарядка самоката Kugoo M5, Kugoo X1, Kugoo M3'}, 'Kug F3 плюс'), false);
+  assert.equal(matchesSearchQuery({title: 'Электросамокат Kugoo F3 Plus'}, 'Kug F3 плюс'), true);
+  assert.equal(matchesSearchQuery({title: 'Зарядка для iPhone 15'}, 'iPhone 15'), false);
+  assert.equal(matchesSearchQuery({title: 'Зарядка для iPhone 15'}, 'зарядка iPhone 15'), true);
+  assert.equal(matchesSearchQuery({title: 'iPhone 14 Pro'}, 'iPhone 15 Pro'), false);
+});
+
+test('price range rejects cheap, expensive and unreadable prices', () => {
+  assert.equal(matchesPriceRange(1490, 20000, 45000), false);
+  assert.equal(matchesPriceRange(30000, 20000, 45000), true);
+  assert.equal(matchesPriceRange(50000, 20000, 45000), false);
+  assert.equal(matchesPriceRange(0, 20000, 45000), false);
 });
 
 test('only HTTPS Avito links are accepted', () => {
