@@ -93,6 +93,8 @@ textarea { min-height: 106px; resize: vertical; }
 .section-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; margin: 3px 0 23px; }
 .section-head h1 { font-size: 30px; }
 .section-head select { width: auto; max-width: 155px; margin: 0; padding: 9px 11px; background: #fff; font-size: 11px; }
+.result-notice { margin: -8px 0 16px; color: #796126; font-size: 12px; line-height: 1.5; }
+.result-notice:empty { display: none; }
 .list { display: grid; gap: 14px; }
 .empty { padding: 52px 22px; color: #8792a1; background: #fff; border-radius: 15px; text-align: center; font-size: 13px; }
 .card { overflow: hidden; background: var(--paper); border-radius: 15px; box-shadow: 0 9px 28px rgba(27,39,62,.045); animation: rise .32s ease both; }

@@ -1,10 +1,10 @@
 {
   "name": "lot-avito-extension",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check background.js && node --check core.js && node --check panel.js"
+    "check": "node --check background.js && node --check core.js && node --check local-priority.js && node --check panel.js"
   }
 }

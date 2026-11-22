@@ -1,4 +1,5 @@
 import {buildSearchUrl,isSafeAvitoUrl,matchesSearchCity,matchesSearchQuery,matchesPriceRange,upsertResult,localAnalyze,mergeVerdicts,parseRequirements,parsePrice} from './core.js';
+import {enableLocalPriority} from './local-priority.js';
 
 const $=id=>document.getElementById(id);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -30,7 +31,7 @@ $('testApi').onclick=async()=>{try{const config=currentSettings();if(!config.api
 $('templateBtn').onclick=()=>{$('requirements').value=/iphone|айфон|смартфон/i.test($('query').value)?'Память 128 ГБ; аккумулятор не ниже 85%; Face ID работает; нет блокировки iCloud; без ремонта':'Пробег до 1000 км; аккумулятор исправен; документы; зарядное устройство';toast('Шаблон можно изменить')};
 const draft=()=>Object.fromEntries(['query','city','minPrice','maxPrice','condition','requirements','pages','limit','recheck'].map(id=>[id,$(id).type==='checkbox'?$(id).checked:$(id).value]));
 document.querySelectorAll('#searchForm input,#searchForm textarea,#searchForm select').forEach(el=>el.onchange=()=>{chrome.storage.local.set({draft:draft()});if(['query','city','minPrice','maxPrice'].includes(el.id))render()});
-function progress(done,total,message){$('progress').classList.remove('hidden');$('progressNumbers').textContent=done+' / '+total;$('progressFill').style.width=Math.min(100,done/total*100)+'%';$('progressDetail').textContent=message}
+function progress(done,total,message){$('progress').classList.remove('hidden');$('progressNumbers').textContent=done+' найдено · лимит '+total;$('progressFill').style.width=Math.min(100,done/total*100)+'%';$('progressDetail').textContent=message}
 async function gate(){while(job?.paused&&!job.stopped)await sleep(200);if(job?.stopped)throw Error('Поиск остановлен')}
 $('pauseBtn').onclick=()=>{if(!job)return;job.paused=!job.paused;$('pauseBtn').textContent=job.paused?'Продолжить':'Пауза';$('progressTitle').textContent=job.paused?'Поиск на паузе':'Идёт поиск'};
 $('stopBtn').onclick=()=>{if(job){job.stopped=true;job.paused=false;toast('Остановка после текущего действия')}};
@@ -64,12 +65,17 @@ $('searchForm').onsubmit=async event=>{
   event.preventDefault();if(job)return;
   const input=draft(),requirements=parseRequirements(input.requirements),minPrice=parsePrice(input.minPrice),maxPrice=parsePrice(input.maxPrice),pages=Math.min(10,Math.max(1,Number(input.pages)||1)),limit=Math.min(100,Math.max(1,Number(input.limit)||30));
   if(minPrice&&maxPrice&&minPrice>maxPrice){toast('Цена «от» должна быть не выше цены «до»');$('minPrice').focus();return}
-  let done=0,keepTab=false;const previous=new Set(results.map(item=>item.url)),seenThisRun=new Set();
+  let done=0,keepTab=false,localPriorityFound=false;const previous=new Set(results.map(item=>item.url)),seenThisRun=new Set();
   try{
     await chrome.storage.local.set({draft:input});
     const tab=await chrome.tabs.create({url:'about:blank',active:false});job={tabId:tab.id,paused:false,stopped:false};$('startBtn').disabled=true;$('progressTitle').textContent='Идёт поиск';progress(0,limit,'Открываем выдачу…');
     for(let page=1;page<=pages&&done<limit;page++){
       await navigate(buildSearchUrl({query:input.query,city:input.city,page,minPrice,maxPrice}));
+      if(input.city.trim().toLowerCase()!=='вся россия'){
+        const priority=await scrape(enableLocalPriority);
+        if(priority!=='not-found')localPriorityFound=true;
+        if(priority==='enabled')await sleep(1600);
+      }
       const listing=await scrape(scrapeList);if(!listing||listing.blocked){keepTab=true;await chrome.tabs.update(job.tabId,{active:true});throw Error('Авито запросил проверку. Пройдите её во вкладке и повторите поиск')}
       if(!listing.items.length){if(page===1)throw Error('Карточки не прочитаны. Проверьте выдачу Авито');break}
       for(const candidate of listing.items){
@@ -84,7 +90,8 @@ $('searchForm').onsubmit=async event=>{
         results=upsertResult(results,{...item,...mergeVerdicts(local,ai,requirements),id:old?.id||crypto.randomUUID(),checkedAt:Date.now()});done++;await chrome.storage.local.set({results});render();progress(done,limit,'Проверено: '+done);await sleep(700+Math.random()*700);
       }
     }
-    $('progressTitle').textContent='Поиск завершён';progress(done,limit,'Результаты сохранены');view('results');toast('Проверено объявлений: '+done);
+    const priorityMissing=!localPriorityFound&&input.city.trim().toLowerCase()!=='вся россия';
+    $('progressTitle').textContent='Поиск завершён';progress(done,limit,priorityMissing?'Галочка Авито не найдена; город проверен у каждого объявления':'Результаты сохранены');$('progressFill').style.width='100%';$('resultNotice').textContent=priorityMissing?'Переключатель «сначала из города» не найден на странице Авито. Результаты всё равно проверены по городу объявления.':'';view('results');toast('Проверено объявлений: '+done);
   }catch(error){$('progressTitle').textContent=job?.stopped?'Поиск остановлен':'Поиск прерван';$('progressDetail').textContent=error.message;toast(error.message)}
   finally{const tabId=job?.tabId;job=null;$('startBtn').disabled=false;if(tabId&&!keepTab)chrome.tabs.remove(tabId).catch(()=>{})}
 };
