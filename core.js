@@ -56,6 +56,10 @@ export function buildSearchUrl({ query, city, page = 1, minPrice = 0, maxPrice =
 
 const ACCESSORIES = /(?:^|[^а-яa-z])(зарядк[а-я]*|зарядн[а-я]*|чехол|чехлы|кабель|провод[а-я]*|запчаст[а-я]*|креплени[а-я]*|держател[а-я]*|адаптер[а-я]*|блок питания|защитн[а-я]* стекл[а-я]*)(?=$|[^а-яa-z])/i;
 
+export function isAccessoryForQuery(item, query) {
+  return ACCESSORIES.test(normalizeText(item.title)) && !ACCESSORIES.test(normalizeText(query));
+}
+
 export function matchesSearchQuery(item, query) {
   const canonical = value => normalizeText(value).replace(/(^|[^а-я])плюс(?=$|[^а-я])/g, '$1plus');
   const requested = canonical(query);
@@ -63,7 +67,7 @@ export function matchesSearchQuery(item, query) {
   const words = requested.match(/[a-zа-я0-9]+/g)?.filter(word => word.length > 2 || /\d/.test(word)) || [];
   if (!words.length || !title) return false;
   const titleWords = title.match(/[a-zа-я0-9]+/g) || [];
-  if (ACCESSORIES.test(title) && !ACCESSORIES.test(requested)) return false;
+  if (isAccessoryForQuery(item, query)) return false;
   return words.every(word => titleWords.some(candidate =>
     candidate === word || word.length >= 3 && !/\d/.test(word) && candidate.startsWith(word) && candidate.length - word.length <= 3
   ));

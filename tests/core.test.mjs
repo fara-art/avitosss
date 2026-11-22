@@ -6,6 +6,7 @@ import {
   isSafeAvitoUrl,
   matchesSearchCity,
   matchesSearchQuery,
+  isAccessoryForQuery,
   matchesPriceRange,
   localAnalyze,
   mergeVerdicts,
@@ -37,6 +38,12 @@ test('query relevance excludes a charger and a different model', () => {
   assert.equal(matchesSearchQuery({title: 'Зарядка для iPhone 15'}, 'iPhone 15'), false);
   assert.equal(matchesSearchQuery({title: 'Зарядка для iPhone 15'}, 'зарядка iPhone 15'), true);
   assert.equal(matchesSearchQuery({title: 'iPhone 14 Pro'}, 'iPhone 15 Pro'), false);
+});
+
+test('accessory filter does not reject ordinary listings from a broad Avito query', () => {
+  assert.equal(isAccessoryForQuery({title: 'Электросамокат Kugoo G3 Plus'}, 'Kug F3 плюс'), false);
+  assert.equal(isAccessoryForQuery({title: 'Зарядка для Kugoo G3 Plus'}, 'Kug F3 плюс'), true);
+  assert.equal(isAccessoryForQuery({title: 'Зарядка для Kugoo G3 Plus'}, 'Зарядка Kugoo'), false);
 });
 
 test('price range rejects cheap, expensive and unreadable prices', () => {

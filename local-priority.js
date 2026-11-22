@@ -13,8 +13,8 @@ export function enableLocalPriority(){
   return 'not-found';
 }
 
-// Serialized into a listing tab. Scroll in short steps so lazy-loaded cards appear.
-export async function scrollListing(){
+// Serialized into a listing tab. One small scroll is followed by inspecting its cards.
+export async function scanListingStep(){
   const items=new Map();
   function collect(){
     for(const root of document.querySelectorAll('[data-marker="item"],[data-testid="item"],[data-item-id]')){
@@ -29,14 +29,9 @@ export async function scrollListing(){
     }
   }
   collect();
-  let lastHeight=0;
-  for(let step=0;step<36;step++){
-    window.scrollBy(0,Math.max(320,Math.floor(window.innerHeight*.85)));
-    await new Promise(resolve=>setTimeout(resolve,180));
-    collect();
-    const height=document.documentElement.scrollHeight;
-    if(window.scrollY+window.innerHeight>=height-20&&height===lastHeight)break;
-    lastHeight=height;
-  }
-  return {height:document.documentElement.scrollHeight,position:window.scrollY,items:[...items.values()]};
+  window.scrollBy({top:Math.max(240,Math.floor(window.innerHeight*.5)),behavior:'smooth'});
+  await new Promise(resolve=>setTimeout(resolve,550));
+  collect();
+  const height=document.documentElement.scrollHeight;
+  return {items:[...items.values()],position:window.scrollY,atBottom:window.scrollY+window.innerHeight>=height-20,blocked:/captcha|капча|доступ ограничен|подтвердите.{0,30}(не робот|человек)/i.test(document.title+' '+(document.body?.innerText||'').slice(0,4000))};
 }
