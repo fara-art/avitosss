@@ -1,4 +1,4 @@
-import {buildSearchUrl,isSafeAvitoUrl,matchesSearchCity,matchesSearchQuery,matchesPriceRange,localAnalyze,mergeVerdicts,parseRequirements,parsePrice} from './core.js';
+import {buildSearchUrl,isSafeAvitoUrl,matchesSearchCity,matchesSearchQuery,matchesPriceRange,upsertResult,localAnalyze,mergeVerdicts,parseRequirements,parsePrice} from './core.js';
 
 const $=id=>document.getElementById(id);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -10,7 +10,7 @@ document.querySelectorAll('.nav').forEach(el=>el.onclick=()=>view(el.dataset.vie
 $('settingsBtn').onclick=()=>view('settings');
 const state=await chrome.storage.local.get(['settings','results','saved','draft']);
 settings={...defaults,...state.settings};results=Array.isArray(state.results)?state.results:[];saved=Array.isArray(state.saved)?state.saved:[];
-for(const [key,value] of Object.entries(state.draft||{}))if($(key))$(key).value=value;
+for(const [key,value] of Object.entries(state.draft||{}))if($(key)){if($(key).type==='checkbox')$(key).checked=value===true;else $(key).value=value}
 function setProvider(){const selected=$('provider').value;for(const id of ['apiKey','model','testApi'])$(id).disabled=selected==='none'}
 $('provider').value=settings.provider;$('apiKey').value=settings.apiKey;$('model').value=settings.model;setProvider();
 $('provider').onchange=()=>{$('model').value={none:'',openai:'gpt-4.1-nano',deepseek:'deepseek-chat'}[$('provider').value];setProvider()};
@@ -28,7 +28,7 @@ async function analyzeAI(item,requirements,config=settings){
 }
 $('testApi').onclick=async()=>{try{const config=currentSettings();if(!config.apiKey||!config.model)throw Error('Введите ключ и модель');$('settingsStatus').textContent='Проверяем…';await analyzeAI({title:'Тестовый телефон',description:'128 ГБ',specs:''},['Память 128 ГБ'],config);$('settingsStatus').textContent='Подключение работает'}catch(error){$('settingsStatus').textContent='Ошибка: '+error.message}};
 $('templateBtn').onclick=()=>{$('requirements').value=/iphone|айфон|смартфон/i.test($('query').value)?'Память 128 ГБ; аккумулятор не ниже 85%; Face ID работает; нет блокировки iCloud; без ремонта':'Пробег до 1000 км; аккумулятор исправен; документы; зарядное устройство';toast('Шаблон можно изменить')};
-const draft=()=>Object.fromEntries(['query','city','minPrice','maxPrice','condition','requirements','pages','limit'].map(id=>[id,$(id).value]));
+const draft=()=>Object.fromEntries(['query','city','minPrice','maxPrice','condition','requirements','pages','limit','recheck'].map(id=>[id,$(id).type==='checkbox'?$(id).checked:$(id).value]));
 document.querySelectorAll('#searchForm input,#searchForm textarea,#searchForm select').forEach(el=>el.onchange=()=>{chrome.storage.local.set({draft:draft()});if(['query','city','minPrice','maxPrice'].includes(el.id))render()});
 function progress(done,total,message){$('progress').classList.remove('hidden');$('progressNumbers').textContent=done+' / '+total;$('progressFill').style.width=Math.min(100,done/total*100)+'%';$('progressDetail').textContent=message}
 async function gate(){while(job?.paused&&!job.stopped)await sleep(200);if(job?.stopped)throw Error('Поиск остановлен')}
@@ -64,7 +64,7 @@ $('searchForm').onsubmit=async event=>{
   event.preventDefault();if(job)return;
   const input=draft(),requirements=parseRequirements(input.requirements),minPrice=parsePrice(input.minPrice),maxPrice=parsePrice(input.maxPrice),pages=Math.min(10,Math.max(1,Number(input.pages)||1)),limit=Math.min(100,Math.max(1,Number(input.limit)||30));
   if(minPrice&&maxPrice&&minPrice>maxPrice){toast('Цена «от» должна быть не выше цены «до»');$('minPrice').focus();return}
-  let done=0,keepTab=false;const visited=new Set(results.map(item=>item.url));
+  let done=0,keepTab=false;const previous=new Set(results.map(item=>item.url)),seenThisRun=new Set();
   try{
     await chrome.storage.local.set({draft:input});
     const tab=await chrome.tabs.create({url:'about:blank',active:false});job={tabId:tab.id,paused:false,stopped:false};$('startBtn').disabled=true;$('progressTitle').textContent='Идёт поиск';progress(0,limit,'Открываем выдачу…');
@@ -73,14 +73,15 @@ $('searchForm').onsubmit=async event=>{
       const listing=await scrape(scrapeList);if(!listing||listing.blocked){keepTab=true;await chrome.tabs.update(job.tabId,{active:true});throw Error('Авито запросил проверку. Пройдите её во вкладке и повторите поиск')}
       if(!listing.items.length){if(page===1)throw Error('Карточки не прочитаны. Проверьте выдачу Авито');break}
       for(const candidate of listing.items){
-        await gate();if(done>=limit)break;if(!isSafeAvitoUrl(candidate.url)||!matchesSearchCity(candidate,input.city)||!matchesSearchQuery(candidate,input.query)||visited.has(candidate.url)||candidate.price&&!matchesPriceRange(candidate.price,minPrice,maxPrice))continue;
-        visited.add(candidate.url);progress(done,limit,'Проверяем '+candidate.title.slice(0,55));await navigate(candidate.url);
+        await gate();if(done>=limit)break;if(!isSafeAvitoUrl(candidate.url)||!matchesSearchCity(candidate,input.city)||!matchesSearchQuery(candidate,input.query)||seenThisRun.has(candidate.url)||(!input.recheck&&previous.has(candidate.url))||candidate.price&&!matchesPriceRange(candidate.price,minPrice,maxPrice))continue;
+        seenThisRun.add(candidate.url);progress(done,limit,'Проверяем '+candidate.title.slice(0,55));await navigate(candidate.url);
         const detail=await scrape(scrapeDetail);if(!detail||detail.blocked){keepTab=true;await chrome.tabs.update(job.tabId,{active:true});throw Error('Авито запросил проверку. Пройдите её во вкладке и повторите поиск')}
         const item={...candidate,...detail,price:detail.price||candidate.price,image:detail.image||candidate.image};
         if(!matchesSearchCity(item,input.city)||!matchesSearchQuery(item,input.query)||!matchesPriceRange(item.price,minPrice,maxPrice))continue;
         const local=localAnalyze(item,requirements,{maxPrice,condition:input.condition});
         let ai=null;if(settings.provider!=='none'&&settings.apiKey)try{ai=await analyzeAI(item,requirements)}catch(error){local.risks.push('ИИ-анализ не выполнен: '+error.message.slice(0,90))}
-        results.unshift({...item,...mergeVerdicts(local,ai,requirements),id:crypto.randomUUID(),checkedAt:Date.now()});done++;await chrome.storage.local.set({results});render();progress(done,limit,'Проверено: '+done);await sleep(700+Math.random()*700);
+        const old=results.find(value=>value.url===item.url);
+        results=upsertResult(results,{...item,...mergeVerdicts(local,ai,requirements),id:old?.id||crypto.randomUUID(),checkedAt:Date.now()});done++;await chrome.storage.local.set({results});render();progress(done,limit,'Проверено: '+done);await sleep(700+Math.random()*700);
       }
     }
     $('progressTitle').textContent='Поиск завершён';progress(done,limit,'Результаты сохранены');view('results');toast('Проверено объявлений: '+done);

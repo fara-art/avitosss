@@ -11,6 +11,7 @@ import {
   mergeVerdicts,
   parsePrice,
   parseRequirements,
+  upsertResult,
 } from '../core.js';
 
 test('city names are mapped and transliterated for Avito paths', () => {
@@ -42,6 +43,14 @@ test('price range rejects cheap, expensive and unreadable prices', () => {
   assert.equal(matchesPriceRange(30000, 20000, 45000), true);
   assert.equal(matchesPriceRange(50000, 20000, 45000), false);
   assert.equal(matchesPriceRange(0, 20000, 45000), false);
+});
+
+test('rechecking replaces a result without changing other results', () => {
+  const original = [{url: 'https://www.avito.ru/moskva/a_1234567', score: 60}, {url: 'https://www.avito.ru/moskva/b_1234567', score: 70}];
+  const updated = upsertResult(original, {url: original[0].url, score: 90});
+  assert.equal(updated.length, 2);
+  assert.equal(updated[0].score, 90);
+  assert.equal(updated[1].score, 70);
 });
 
 test('only HTTPS Avito links are accepted', () => {

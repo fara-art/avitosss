@@ -74,6 +74,10 @@ export function matchesPriceRange(price, minPrice = 0, maxPrice = 0) {
   return (!minPrice || price >= minPrice) && (!maxPrice || price <= maxPrice);
 }
 
+export function upsertResult(results, item) {
+  return [item, ...results.filter(previous => previous.url !== item.url)];
+}
+
 export function isSafeAvitoUrl(value) {
   try {
     const url = new URL(value);
