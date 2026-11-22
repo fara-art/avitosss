@@ -41,7 +41,8 @@ $('stopBtn').onclick=()=>{if(job){job.stopped=true;job.paused=false;toast('Ос�
 async function navigate(url,tabId=job.tabId){
   await gate();
   await chrome.tabs.update(tabId,{url});
-  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(Error('Страница не загрузилась за 45 секунд')),45000);function finish(error){clearTimeout(timer);chrome.tabs.onUpdated.removeListener(listener);error?reject(error):resolve()}function listener(id,change){if(id===tabId&&change.status==='complete')finish()}chrome.tabs.onUpdated.addListener(listener);chrome.tabs.get(tabId).then(tab=>{if(tab.status==='complete'&&tab.url===url)finish()}).catch(()=>{})});
+  const timeoutMs=tabId===job.detailTabId?20000:45000;
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(Error('Страница не загрузилась за '+timeoutMs/1000+' секунд')),timeoutMs);function finish(error){clearTimeout(timer);chrome.tabs.onUpdated.removeListener(listener);error?reject(error):resolve()}function listener(id,change){if(id===tabId&&change.status==='complete')finish()}chrome.tabs.onUpdated.addListener(listener);chrome.tabs.get(tabId).then(tab=>{if(tab.status==='complete'&&tab.url===url)finish()}).catch(()=>{})});
   const tab=await chrome.tabs.get(tabId);if(!isSafeAvitoUrl(tab.url))throw Error('Авито перенаправил на неизвестный сайт');
   await sleep(900);
 }
@@ -67,7 +68,7 @@ $('searchForm').onsubmit=async event=>{
   event.preventDefault();if(job)return;
   const input=draft(),requirements=parseRequirements(input.requirements),minPrice=parsePrice(input.minPrice),maxPrice=parsePrice(input.maxPrice),pages=Math.min(10,Math.max(1,Number(input.pages)||1)),limit=input.continuous?Infinity:Math.min(100,Math.max(1,Number(input.limit)||30));
   if(minPrice&&maxPrice&&minPrice>maxPrice){toast('Цена «от» должна быть не выше цены «до»');$('minPrice').focus();return}
-  let done=0,keepTabId=null,localPriorityFound=false,page=1;const skipped={city:0,price:0,accessory:0};const previous=new Set(results.map(item=>item.url)),seenThisRun=new Set(),seenPageSignatures=new Set();
+  let done=0,keepTabId=null,localPriorityFound=false,page=1;const skipped={city:0,price:0,accessory:0,error:0};const previous=new Set(results.map(item=>item.url)),seenThisRun=new Set(),seenPageSignatures=new Set();
   try{
     await chrome.storage.local.set({draft:input});
     const tab=await chrome.tabs.create({url:'about:blank',active:false});job={tabId:tab.id,detailTabId:null,paused:false,stopped:false,page:1,reviewed:0};
@@ -90,8 +91,21 @@ $('searchForm').onsubmit=async event=>{
           listingItems.set(candidate.url,candidate);
           await gate();if(done>=limit)break;
           if(!isSafeAvitoUrl(candidate.url)||!shouldInspectCandidate(candidate.url,seenThisRun,previous,input.repeatOnNextSearch))continue;
-          seenThisRun.add(candidate.url);progress(done,limit,'Открываем '+candidate.title.slice(0,55));await navigate(candidate.url,job.detailTabId);
-          const detail=await scrape(scrapeDetail,job.detailTabId);if(!detail||detail.blocked){keepTabId=job.detailTabId;await chrome.tabs.update(job.detailTabId,{active:true});throw Error('Авито запросил проверку. Пройдите её в открытой вкладке и повторите поиск')}
+          seenThisRun.add(candidate.url);
+          if(!matchesSearchCity(candidate,input.city)){skipped.city++;progress(done,limit,'Пропущено: другой город по ссылке · продолжаем');continue}
+          progress(done,limit,'Открываем '+candidate.title.slice(0,55));
+          let detail;
+          try{
+            await navigate(candidate.url,job.detailTabId);
+            detail=await scrape(scrapeDetail,job.detailTabId);
+            if(!detail)throw Error('Страница объявления не прочитана');
+            if(detail.blocked){keepTabId=job.detailTabId;await chrome.tabs.update(job.detailTabId,{active:true});throw Error('Авито запросил проверку. Пройдите её в открытой вкладке и повторите поиск')}
+          }catch(error){
+            if(job.stopped||keepTabId===job.detailTabId)throw error;
+            const detailTab=await chrome.tabs.get(job.detailTabId).catch(()=>null);
+            if(!detailTab){const replacement=await chrome.tabs.create({url:'about:blank',active:false});job.detailTabId=replacement.id}
+            skipped.error++;progress(done,limit,'Ошибка объявления: '+error.message.slice(0,70)+' · идём дальше');await waitWithGate(500);continue;
+          }
           job.reviewed++;
           const item={...candidate,...detail,price:detail.price||candidate.price,image:detail.image||candidate.image};
           if(!matchesSearchCity(item,input.city)){skipped.city++;progress(done,limit,'Пропущено: другой город · страница '+page);continue}
@@ -117,8 +131,8 @@ $('searchForm').onsubmit=async event=>{
       else if(input.continuous||page<=pages&&done<limit)await waitWithGate(1500);
     }
     const priorityMissing=!localPriorityFound&&input.city.trim().toLowerCase()!=='вся россия';
-    $('progressTitle').textContent='Поиск завершён';progress(done,limit,'Просмотрено '+job.reviewed+' · другой город '+skipped.city+' · цена '+skipped.price+' · аксессуары '+skipped.accessory);$('track').classList.remove('scanning');$('progressFill').style.width='100%';$('resultNotice').textContent=(priorityMissing?'Переключатель «сначала из города» не найден на странице Авито. ':'')+'Просмотрено: '+job.reviewed+'. Пропущено: город '+skipped.city+', цена '+skipped.price+', аксессуары '+skipped.accessory+'.';view('results');toast('Найдено объявлений: '+done);
-  }catch(error){$('progressTitle').textContent=job?.stopped?'Поиск остановлен':'Поиск прерван';$('progressDetail').textContent=job?.stopped?'Просмотрено '+(job?.reviewed||0)+' · сохранено '+done+' · другой город '+skipped.city+' · цена '+skipped.price+' · аксессуары '+skipped.accessory:error.message;toast(job?.stopped?'Поиск остановлен. Найдено: '+done:error.message)}
+    $('progressTitle').textContent='Поиск завершён';progress(done,limit,'Просмотрено '+job.reviewed+' · другой город '+skipped.city+' · цена '+skipped.price+' · ошибки загрузки '+skipped.error);$('track').classList.remove('scanning');$('progressFill').style.width='100%';$('resultNotice').textContent=(priorityMissing?'Переключатель «сначала из города» не найден на странице Авито. ':'')+'Просмотрено: '+job.reviewed+'. Пропущено: город '+skipped.city+', цена '+skipped.price+', аксессуары '+skipped.accessory+', ошибки загрузки '+skipped.error+'.';view('results');toast('Найдено объявлений: '+done);
+  }catch(error){$('progressTitle').textContent=job?.stopped?'Поиск остановлен':'Поиск прерван';$('progressDetail').textContent=job?.stopped?'Просмотрено '+(job?.reviewed||0)+' · сохранено '+done+' · другой город '+skipped.city+' · ошибки загрузки '+skipped.error:error.message;toast(job?.stopped?'Поиск остановлен. Найдено: '+done:error.message)}
   finally{const tabIds=[job?.tabId,job?.detailTabId].filter(Boolean);job=null;$('track').classList.remove('scanning');$('startBtn').disabled=false;for(const tabId of tabIds)if(tabId!==keepTabId)chrome.tabs.remove(tabId).catch(()=>{})}
 };
 function card(item,isSaved){
