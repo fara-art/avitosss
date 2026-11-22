@@ -1,0 +1,110 @@
+import {buildSearchUrl,isSafeAvitoUrl,localAnalyze,mergeVerdicts,parseRequirements,parsePrice} from './core.js';
+
+const $=id=>document.getElementById(id);
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const defaults={provider:'none',apiKey:'',model:''};
+let settings={...defaults},results=[],saved=[],job=null;
+function toast(message){$('toast').textContent=message;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),3500)}
+function view(name){document.querySelectorAll('.view').forEach(el=>el.classList.toggle('active',el.id===name));document.querySelectorAll('.nav').forEach(el=>el.classList.toggle('active',el.dataset.view===name));render()}
+document.querySelectorAll('.nav').forEach(el=>el.onclick=()=>view(el.dataset.view));
+$('settingsBtn').onclick=()=>view('settings');
+const state=await chrome.storage.local.get(['settings','results','saved','draft']);
+settings={...defaults,...state.settings};results=Array.isArray(state.results)?state.results:[];saved=Array.isArray(state.saved)?state.saved:[];
+for(const [key,value] of Object.entries(state.draft||{}))if($(key))$(key).value=value;
+function setProvider(){const selected=$('provider').value;for(const id of ['apiKey','model','testApi'])$(id).disabled=selected==='none'}
+$('provider').value=settings.provider;$('apiKey').value=settings.apiKey;$('model').value=settings.model;setProvider();
+$('provider').onchange=()=>{$('model').value={none:'',openai:'gpt-4.1-nano',deepseek:'deepseek-chat'}[$('provider').value];setProvider()};
+const currentSettings=()=>({provider:$('provider').value,apiKey:$('apiKey').value.trim(),model:$('model').value.trim()});
+$('saveSettings').onclick=async()=>{const next=currentSettings();if(next.provider!=='none'&&(!next.apiKey||!next.model)){$('settingsStatus').textContent='Введите ключ и модель';return}settings=next;await chrome.storage.local.set({settings});$('settingsStatus').textContent='Сохранено в этом профиле Chrome';toast('Настройки сохранены')};
+async function analyzeAI(item,requirements,config=settings){
+  if(config.provider==='none'||!config.apiKey)return null;
+  const endpoint=config.provider==='openai'?'https://api.openai.com/v1/chat/completions':'https://api.deepseek.com/chat/completions';
+  const instruction='Верни JSON: {"matched":[],"missing":[],"contradicted":[],"risks":[],"questions":[],"summary":""}. Для каждого требования используй ровно один статус. Подтверждай только явные сведения; отсутствие факта означает missing. Отвечай по-русски.';
+  const response=await fetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+config.apiKey,'Content-Type':'application/json'},body:JSON.stringify({model:config.model,messages:[{role:'system',content:instruction},{role:'user',content:JSON.stringify({item:{title:item.title,description:item.description,specs:item.specs},requirements})}],response_format:{type:'json_object'},max_tokens:900})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.error?.message||'Ошибка API: HTTP '+response.status);
+  const content=data.choices?.[0]?.message?.content;if(!content)throw Error('API вернул пустой ответ');
+  return JSON.parse(content);
+}
+$('testApi').onclick=async()=>{try{const config=currentSettings();if(!config.apiKey||!config.model)throw Error('Введите ключ и модель');$('settingsStatus').textContent='Проверяем…';await analyzeAI({title:'Тестовый телефон',description:'128 ГБ',specs:''},['Память 128 ГБ'],config);$('settingsStatus').textContent='Подключение работает'}catch(error){$('settingsStatus').textContent='Ошибка: '+error.message}};
+$('templateBtn').onclick=()=>{$('requirements').value=/iphone|айфон|смартфон/i.test($('query').value)?'Память 128 ГБ; аккумулятор не ниже 85%; Face ID работает; нет блокировки iCloud; без ремонта':'Пробег до 1000 км; аккумулятор исправен; документы; зарядное устройство';toast('Шаблон можно изменить')};
+const draft=()=>Object.fromEntries(['query','city','maxPrice','condition','requirements','pages','limit'].map(id=>[id,$(id).value]));
+document.querySelectorAll('#searchForm input,#searchForm textarea,#searchForm select').forEach(el=>el.onchange=()=>chrome.storage.local.set({draft:draft()}));
+function progress(done,total,message){$('progress').classList.remove('hidden');$('progressNumbers').textContent=done+' / '+total;$('progressFill').style.width=Math.min(100,done/total*100)+'%';$('progressDetail').textContent=message}
+async function gate(){while(job?.paused&&!job.stopped)await sleep(200);if(job?.stopped)throw Error('Поиск остановлен')}
+$('pauseBtn').onclick=()=>{if(!job)return;job.paused=!job.paused;$('pauseBtn').textContent=job.paused?'Продолжить':'Пауза';$('progressTitle').textContent=job.paused?'Поиск на паузе':'Идёт поиск'};
+$('stopBtn').onclick=()=>{if(job){job.stopped=true;job.paused=false;toast('Остановка после текущего действия')}};
+async function navigate(url){
+  await gate();
+  const tabId=job.tabId;
+  await chrome.tabs.update(tabId,{url});
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>finish(Error('Страница не загрузилась за 45 секунд')),45000);function finish(error){clearTimeout(timer);chrome.tabs.onUpdated.removeListener(listener);error?reject(error):resolve()}function listener(id,change){if(id===tabId&&change.status==='complete')finish()}chrome.tabs.onUpdated.addListener(listener);chrome.tabs.get(tabId).then(tab=>{if(tab.status==='complete'&&tab.url===url)finish()}).catch(()=>{})});
+  const tab=await chrome.tabs.get(tabId);if(!isSafeAvitoUrl(tab.url))throw Error('Авито перенаправил на неизвестный сайт');
+  await sleep(900);
+}
+async function scrape(func){const output=await chrome.scripting.executeScript({target:{tabId:job.tabId},func});return output?.[0]?.result}
+function scrapeList(){
+  const blocked=/captcha|капча|доступ ограничен|подтвердите.{0,30}(не робот|человек)/i.test(document.title+' '+document.body.innerText.slice(0,4000));
+  const items=[],seen=new Set();
+  for(const root of document.querySelectorAll('[data-marker="item"],[data-testid="item"],[data-item-id]')){
+    const link=[...root.querySelectorAll('a[href]')].find(a=>{try{const u=new URL(a.href);return /_\d{6,}/.test(u.pathname)&&(u.hostname==='avito.ru'||u.hostname.endsWith('.avito.ru'))}catch{return false}});
+    if(!link)continue;const url=new URL(link.href);url.search='';url.hash='';if(seen.has(url.href))continue;seen.add(url.href);
+    const title=(root.querySelector('[data-marker="item-title"],[itemprop="name"],h3')?.textContent||link.textContent||'').trim();
+    const priceText=root.querySelector('[data-marker="item-price"],[itemprop="price"]')?.textContent||root.textContent.match(/\d[\d\s ]*₽/)?.[0]||'';
+    items.push({url:url.href,title,price:Number(priceText.replace(/\D/g,''))||0,image:root.querySelector('img')?.src||''});
+  }
+  return {items:items.slice(0,100),blocked};
+}
+function scrapeDetail(){
+  const find=(...selectors)=>{for(const selector of selectors){const text=document.querySelector(selector)?.textContent?.trim();if(text)return text}return ''};
+  const body=document.body.innerText.slice(0,5000);
+  return {title:find('h1')||document.title,description:find('[data-marker="item-view/item-description"]','[data-testid="item-description"]','[itemprop="description"]'),specs:[...document.querySelectorAll('[data-marker="item-view/item-params"] li,[data-testid="item-params"] li')].map(el=>el.textContent.trim()).join('; '),price:Number((find('[data-marker="item-view/item-price"]','[itemprop="price"]')||body.match(/\d[\d\s ]*₽/)?.[0]||'').replace(/\D/g,''))||0,location:find('[data-marker="item-view/item-address"]','[data-marker="item-view/item-location"]'),image:document.querySelector('meta[property="og:image"]')?.content||'',url:location.href,blocked:/captcha|капча|доступ ограничен|подтвердите.{0,30}(не робот|человек)/i.test(document.title+' '+body)};
+}
+$('searchForm').onsubmit=async event=>{
+  event.preventDefault();if(job)return;
+  const input=draft(),requirements=parseRequirements(input.requirements),maxPrice=parsePrice(input.maxPrice),pages=Math.min(10,Math.max(1,Number(input.pages)||1)),limit=Math.min(100,Math.max(1,Number(input.limit)||30));
+  let done=0,keepTab=false;const visited=new Set(results.map(item=>item.url));
+  try{
+    await chrome.storage.local.set({draft:input});
+    const tab=await chrome.tabs.create({url:'about:blank',active:false});job={tabId:tab.id,paused:false,stopped:false};$('startBtn').disabled=true;$('progressTitle').textContent='Идёт поиск';progress(0,limit,'Открываем выдачу…');
+    for(let page=1;page<=pages&&done<limit;page++){
+      await navigate(buildSearchUrl({query:input.query,city:input.city,page,maxPrice}));
+      const listing=await scrape(scrapeList);if(!listing||listing.blocked){keepTab=true;await chrome.tabs.update(job.tabId,{active:true});throw Error('Авито запросил проверку. Пройдите её во вкладке и повторите поиск')}
+      if(!listing.items.length){if(page===1)throw Error('Карточки не прочитаны. Проверьте выдачу Авито');break}
+      for(const candidate of listing.items){
+        await gate();if(done>=limit)break;if(!isSafeAvitoUrl(candidate.url)||visited.has(candidate.url)||maxPrice&&candidate.price>maxPrice)continue;
+        visited.add(candidate.url);progress(done,limit,'Проверяем '+candidate.title.slice(0,55));await navigate(candidate.url);
+        const detail=await scrape(scrapeDetail);if(!detail||detail.blocked){keepTab=true;await chrome.tabs.update(job.tabId,{active:true});throw Error('Авито запросил проверку. Пройдите её во вкладке и повторите поиск')}
+        const item={...candidate,...detail,price:detail.price||candidate.price,image:detail.image||candidate.image};
+        if(maxPrice&&item.price>maxPrice)continue;
+        const local=localAnalyze(item,requirements,{maxPrice,condition:input.condition});
+        let ai=null;if(settings.provider!=='none'&&settings.apiKey)try{ai=await analyzeAI(item,requirements)}catch(error){local.risks.push('ИИ-анализ не выполнен: '+error.message.slice(0,90))}
+        results.unshift({...item,...mergeVerdicts(local,ai,requirements),id:crypto.randomUUID(),checkedAt:Date.now()});done++;await chrome.storage.local.set({results});render();progress(done,limit,'Проверено: '+done);await sleep(700+Math.random()*700);
+      }
+    }
+    $('progressTitle').textContent='Поиск завершён';progress(done,limit,'Результаты сохранены');view('results');toast('Проверено объявлений: '+done);
+  }catch(error){$('progressTitle').textContent=job?.stopped?'Поиск остановлен':'Поиск прерван';$('progressDetail').textContent=error.message;toast(error.message)}
+  finally{const tabId=job?.tabId;job=null;$('startBtn').disabled=false;if(tabId&&!keepTab)chrome.tabs.remove(tabId).catch(()=>{})}
+};
+function card(item,isSaved){
+  const el=document.createElement('article');el.className='card';const top=document.createElement('div');top.className='card-top';
+  if(item.image?.startsWith('https://')){const image=document.createElement('img');image.src=item.image;image.alt='';image.loading='lazy';top.append(image)}
+  const main=document.createElement('div');main.className='card-main';const title=document.createElement('h2');title.textContent=item.title||'Объявление';
+  const price=document.createElement('div');price.className='price';price.textContent=item.price?new Intl.NumberFormat('ru-RU').format(item.price)+' ₽':'Цена не указана';
+  const location=document.createElement('div');location.className='meta';location.textContent=item.location||'Авито';
+  const badge=document.createElement('span');badge.className='badge '+(item.risks?.length?'risk':item.missing?.length?'ask':'');badge.textContent=item.risks?.length?'Есть риск':item.missing?.length?'Нужно уточнить':'Подходит';main.append(title,price,location,badge);top.append(main);
+  const body=document.createElement('div');body.className='card-body';
+  for(const [label,values] of [['Подтверждено',item.matched],['Нужно уточнить',item.missing],['Противоречит',item.contradicted],['Риски',item.risks]])if(values?.length){const p=document.createElement('p');p.textContent=label+': '+values.join('; ');body.append(p)}
+  const summary=document.createElement('p');summary.textContent=item.summary||'';body.prepend(summary);
+  const actions=document.createElement('div');actions.className='card-actions';const link=document.createElement('a');link.href=isSafeAvitoUrl(item.url)?item.url:'https://www.avito.ru/';link.target='_blank';link.rel='noopener noreferrer';link.textContent='Открыть ↗';
+  const questions=document.createElement('button');questions.textContent='Вопросы';questions.onclick=async()=>{const list=item.questions?.length?item.questions:item.missing?.map(value=>'Подскажите, пожалуйста: '+value+'?')||[];if(!list.length)return toast('Вопросов пока нет');try{await navigator.clipboard.writeText('Здравствуйте! '+list.join(' '));toast('Вопросы скопированы')}catch{toast('Не удалось скопировать сообщение')}};
+  const save=document.createElement('button');save.textContent=isSaved?'Убрать':'Сохранить';save.onclick=async()=>{saved=isSaved?saved.filter(value=>value.url!==item.url):[item,...saved.filter(value=>value.url!==item.url)];await chrome.storage.local.set({saved});render()};actions.append(link,questions,save);el.append(top,body,actions);return el;
+}
+function render(){const ordered=[...results].sort($('sort').value==='price'?(a,b)=>(a.price||Infinity)-(b.price||Infinity):(a,b)=>(b.score||0)-(a.score||0));$('resultCount').textContent=results.length;$('savedCount').textContent=saved.length;
+  for(const [id,items,message] of [['resultList',ordered,'Пока нет результатов. Начните поиск.'],['savedList',saved,'Сохранённые объявления появятся здесь.']]){const root=$(id);root.replaceChildren();if(!items.length){const empty=document.createElement('div');empty.className='empty';empty.textContent=message;root.append(empty)}else for(const item of items)root.append(card(item,saved.some(value=>value.url===item.url)))}
+  $('clearResults').hidden=!results.length;$('clearSaved').hidden=!saved.length;
+}
+$('sort').onchange=render;
+$('clearResults').onclick=async()=>{if(!confirm('Удалить результаты? Сохранённые объявления останутся.'))return;results=[];await chrome.storage.local.set({results});render()};
+$('clearSaved').onclick=async()=>{if(!confirm('Удалить сохранённые объявления?'))return;saved=[];await chrome.storage.local.set({saved});render()};
+render();

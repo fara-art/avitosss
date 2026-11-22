@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Лот — поиск на Авито",
+  "version": "0.2.0",
+  "description": "Поиск и разбор объявлений Авито по вашим требованиям.",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "tabs", "scripting", "storage"],
+  "host_permissions": ["https://www.avito.ru/*", "https://api.openai.com/*", "https://api.deepseek.com/*"],
+  "action": {"default_title": "Открыть Лот"},
+  "side_panel": {"default_path": "panel.html"},
+  "background": {"service_worker": "background.js"},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'self'"}
+}
