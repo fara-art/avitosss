@@ -12,6 +12,7 @@ import {
   parsePrice,
   parseRequirements,
   upsertResult,
+  shouldInspectCandidate,
 } from '../core.js';
 
 test('city names are mapped and transliterated for Avito paths', () => {
@@ -51,6 +52,17 @@ test('rechecking replaces a result without changing other results', () => {
   assert.equal(updated.length, 2);
   assert.equal(updated[0].score, 90);
   assert.equal(updated[1].score, 70);
+});
+
+test('duplicates are skipped in one run, then can be checked in the next run', () => {
+  const url = 'https://www.avito.ru/moskva/a_1234567';
+  const prior = new Set([url]);
+  const currentRun = new Set();
+  assert.equal(shouldInspectCandidate(url, currentRun, prior, true), true);
+  currentRun.add(url);
+  assert.equal(shouldInspectCandidate(url, currentRun, prior, true), false);
+  assert.equal(shouldInspectCandidate(url, new Set(), prior, true), true);
+  assert.equal(shouldInspectCandidate(url, new Set(), prior, false), false);
 });
 
 test('only HTTPS Avito links are accepted', () => {

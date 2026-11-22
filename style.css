@@ -67,6 +67,7 @@ textarea { min-height: 106px; resize: vertical; }
 .check-row span { display: grid; gap: 2px; }
 .check-row strong { font-size: 12px; font-weight: 700; }
 .check-row small { color: #8490a0; font-size: 11px; font-weight: 400; line-height: 1.35; }
+#searchLimits[hidden] { display: none; }
 .text-btn { padding: 0; background: transparent; color: var(--blue-dark); font-size: 11px; font-weight: 700; }
 .text-btn:hover { text-decoration: underline; }
 .hint { margin: -11px 0 20px; color: #87909f; font-size: 11px; line-height: 1.55; }
@@ -88,6 +89,9 @@ textarea { min-height: 106px; resize: vertical; }
 .progress-head span { color: var(--muted); font-size: 12px; }
 .track { height: 6px; margin: 16px 0 10px; overflow: hidden; background: #e9edf3; border-radius: 10px; }
 .track div { width: 0; height: 100%; background: var(--blue); border-radius: inherit; transition: width .4s ease; }
+.track.scanning div { width: 35% !important; animation: scan 2s ease-in-out infinite alternate; }
+.track.scanning.paused div { animation-play-state: paused; }
+@keyframes scan { from { transform: translateX(0); } to { transform: translateX(190%); } }
 .progress p { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .section-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; margin: 3px 0 23px; }

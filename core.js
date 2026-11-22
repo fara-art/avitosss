@@ -78,6 +78,10 @@ export function upsertResult(results, item) {
   return [item, ...results.filter(previous => previous.url !== item.url)];
 }
 
+export function shouldInspectCandidate(url, seenThisRun, previousResults, repeatOnNextSearch) {
+  return !seenThisRun.has(url) && (repeatOnNextSearch || !previousResults.has(url));
+}
+
 export function isSafeAvitoUrl(value) {
   try {
     const url = new URL(value);

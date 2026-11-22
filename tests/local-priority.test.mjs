@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {enableLocalPriority} from '../local-priority.js';
+import {enableLocalPriority,scrollListing} from '../local-priority.js';
 
 test('enables only an unchecked city-priority checkbox', () => {
   const checkbox = {
@@ -25,5 +25,31 @@ test('enables only an unchecked city-priority checkbox', () => {
     assert.equal(enableLocalPriority(), 'not-found');
   } finally {
     globalThis.document = previousDocument;
+  }
+});
+
+test('listing scroll reaches the bottom before cards are read', async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const card = {
+    textContent: 'Электросамокат Kugoo 30 000 ₽',
+    querySelectorAll: () => [{href: 'https://www.avito.ru/sankt-peterburg/transport/kugoo_1234567', textContent: 'Kugoo'}],
+    querySelector: selector => selector.includes('item-title') ? {textContent: 'Электросамокат Kugoo'} : selector.includes('item-price') ? {textContent: '30 000 ₽'} : null,
+  };
+  globalThis.document = {documentElement: {scrollHeight: 1000},querySelectorAll: () => [card]};
+  globalThis.window = {
+    innerHeight: 800,
+    scrollY: 0,
+    scrollBy(_x, distance) { this.scrollY = Math.min(200, this.scrollY + distance); },
+  };
+  try {
+    const result = await scrollListing();
+    assert.equal(result.position, 200);
+    assert.equal(result.height, 1000);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].price, 30000);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
   }
 });
