@@ -4,6 +4,7 @@ import {
   buildSearchUrl,
   citySlug,
   isSafeAvitoUrl,
+  matchesSearchCity,
   localAnalyze,
   mergeVerdicts,
   parsePrice,
@@ -30,6 +31,15 @@ test('only HTTPS Avito links are accepted', () => {
   assert.equal(isSafeAvitoUrl('https://m.avito.ru/item_123'), true);
   assert.equal(isSafeAvitoUrl('https://avito.ru.evil.example/item'), false);
   assert.equal(isSafeAvitoUrl('javascript:alert(1)'), false);
+});
+
+test('Saint Petersburg search excludes nearby cities and keeps districts', () => {
+  assert.equal(matchesSearchCity({url: 'https://www.avito.ru/sankt-peterburg/telefony/iphone_1234567', location: 'Санкт-Петербург, Центральный район'}, 'Санкт-Петербург'), true);
+  assert.equal(matchesSearchCity({url: 'https://www.avito.ru/sankt-peterburg/telefony/iphone_1234567', location: 'м. Петроградская'}, 'СПб'), true);
+  assert.equal(matchesSearchCity({url: 'https://www.avito.ru/vsevolozhsk/telefony/iphone_1234567', location: 'Всеволожск'}, 'Санкт-Петербург'), false);
+  assert.equal(matchesSearchCity({url: 'https://www.avito.ru/moskva/telefony/iphone_1234567', location: 'Москва'}, 'Санкт-Петербург'), false);
+  assert.equal(matchesSearchCity({url: 'https://www.avito.ru/sankt-peterburg/telefony/iphone_1234567', location: 'Москва'}, 'Санкт-Петербург'), false);
+  assert.equal(matchesSearchCity({url: 'https://www.avito.ru/moskva/telefony/iphone_1234567'}, 'Вся Россия'), true);
 });
 
 test('requirements are parsed and unknown facts become questions', () => {

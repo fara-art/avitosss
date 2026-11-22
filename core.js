@@ -62,6 +62,34 @@ export function isSafeAvitoUrl(value) {
   }
 }
 
+export function matchesSearchCity(item, city) {
+  const requested = citySlug(city);
+  if (requested === 'rossiya') return true;
+  let pathCity;
+  try {
+    const url = new URL(item.url);
+    if (!isSafeAvitoUrl(url.href)) return false;
+    pathCity = url.pathname.split('/').filter(Boolean)[0];
+  } catch {
+    return false;
+  }
+  // Every Avito listing has its location in the first URL segment.
+  // Search pages may include ads from nearby cities, so check each listing.
+  if (pathCity !== requested) return false;
+  const location = normalizeText(item.location);
+  if (!location) return true;
+  const requestedName = normalizeText(city);
+  const aliases = requested === 'sankt-peterburg'
+    ? ['санкт-петербург', 'спб', 'петербург']
+    : [requestedName];
+  const firstPart = location.split(/[,;\n]/)[0].replace(/^(город|г\.)\s*/, '').trim();
+  // Districts, metro stations and street addresses do not state a different city.
+  const knownOtherCity = Object.keys(CITY_ALIASES)
+    .filter(name => CITY_ALIASES[name] !== requested && CITY_ALIASES[name] !== 'rossiya')
+    .some(name => firstPart === name || firstPart.startsWith(name + ' '));
+  return !knownOtherCity || aliases.some(name => firstPart === name || firstPart.startsWith(name + ' '));
+}
+
 export function parseRequirements(value, limit = 20) {
   return String(value)
     .split(/[;\n]+/)
